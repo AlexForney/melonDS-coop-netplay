@@ -100,9 +100,14 @@ private:
     std::atomic<bool> IsRunning {false};
     melonDS::u32 Frame = 0;
     bool Submitted = false;
-    bool DesyncShown = false;
     std::chrono::steady_clock::time_point BootTime;
     std::chrono::steady_clock::time_point FrameAsked;    // when this frame's input went out
+    std::chrono::steady_clock::time_point LastWaitNote;  // the last "waiting for" message
+
+    // The resync due before this frame; false while its snapshot has not arrived.
+    bool DoResync(const melonDS::Netplay::Resync& rs);
+    void ShowNotices();
+    void NoteWaiting();
 
     // Tests (environment): MELONDS_NETPLAY_SCRIPT replaces this player's input with a frame script
     // ("<frame> <slot> <keys> [<held>]", as melonDS-netprobe's); MELONDS_NETPLAY_HASHES writes
@@ -117,6 +122,9 @@ private:
     std::vector<ScriptEvent> Script;
     bool HaveScript = false;
     std::FILE* HashFile = nullptr;
+    // MELONDS_NETPLAY_CORRUPT=<frame>: after that frame, change a byte of this player's console
+    // (a desync on purpose, to test the repair)
+    melonDS::s64 CorruptAt = -1;
     void LoadTestHooks();
 };
 

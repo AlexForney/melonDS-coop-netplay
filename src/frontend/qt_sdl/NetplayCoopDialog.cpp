@@ -232,6 +232,8 @@ void NetplayCoopDialog::onTick()
         QString line = QString("P%1  %2").arg(s + 1).arg(QString::fromStdString(net.LobbyName(s)));
         if (s == 0) line += "  (host)";
         if (s == net.LocalSlot()) line += "  - you";
+        else if (net.GetPhase() == NP::Session::Phase::Running && !net.Connected(s))
+            line += "  - left (can join again)";
         Players->addItem(line);
     }
 
@@ -245,6 +247,9 @@ void NetplayCoopDialog::onTick()
             Status->setText(QString("Hosting on UDP port %1. Players on other networks join with your "
                                     "public IP address; your router must forward this UDP port to "
                                     "this PC. Start when everyone is in.").arg(PortSpin->value()));
+        else if (net.Rejoined())
+            Status->setText("The game is already running: getting it from the host, then you are "
+                            "back in your seat...");
         else
             Status->setText("In the lobby. Waiting for the host to start.");
         StartButton->setEnabled(net.IsHosting() && net.LobbyCount() >= 2);
@@ -265,7 +270,7 @@ void NetplayCoopDialog::onTick()
         Status->setText(QString("Playing: P%1 of %2. Frame %3.%4")
                             .arg(net.LocalSlot() + 1).arg(net.Start().NumPlayers)
                             .arg(np->FrameNumber())
-                            .arg(net.Desynced() ? "  The consoles went out of sync." : ""));
+                            .arg(net.Desynced() ? "  Out of sync: repairing..." : ""));
         break;
     case NP::Session::Phase::Ended:
     case NP::Session::Phase::Idle:

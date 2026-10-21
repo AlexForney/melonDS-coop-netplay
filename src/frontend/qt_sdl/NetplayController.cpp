@@ -175,6 +175,9 @@ void NetplayController::LoadTestHooks()
     }
     if (const char* path = std::getenv("MELONDS_NETPLAY_HASHES"))
         HashFile = std::fopen(path, "w");
+    CorruptAt = -1;
+    if (const char* at = std::getenv("MELONDS_NETPLAY_CORRUPT"))
+        CorruptAt = std::atoll(at);
 }
 
 bool NetplayController::Boot(std::string* error)
@@ -213,13 +216,105 @@ bool NetplayController::Boot(std::string* error)
     }
 
     Frame = 0;
+    if (NetSession->Rejoined())
+    {
+        // coming back into a running session: every console as the host's snapshot has them
+        const std::vector<melonDS::u8>& snap = NetSession->RejoinState();
+        if (!NP::LoadSnapshot(Consoles.data(), info.NumPlayers, *Lock, snap.data(), snap.size()))
+        {
+            *error = "The game's state from the host did not load.";
+            Lock.reset();
+            for (auto& m : Mirrors) m.reset();
+            return false;
+        }
+        Frame = NetSession->FirstFrame();
+        NetSession->ResyncDone(Frame);
+    }
+
     Submitted = false;
-    DesyncShown = false;
     LoadTestHooks();
     BootTime = std::chrono::steady_clock::now();
+    LastWaitNote = BootTime;
     IsRunning.store(true);
-    Local->osdAddMessage(0, "Netplay: %d players, you are P%d", info.NumPlayers, me + 1);
+    if (NetSession->Rejoined())
+        Local->osdAddMessage(0, "Netplay: back in the game as P%d", me + 1);
+    else
+        Local->osdAddMessage(0, "Netplay: %d players, you are P%d", info.NumPlayers, me + 1);
     return true;
+}
+
+bool NetplayController::DoResync(const NP::Resync& rs)
+{
+    const NP::StartInfo& info = NetSession->Start();
+    int me = NetSession->LocalSlot();
+    NP::Resync copy = rs;
+    std::vector<melonDS::u8> own;
+    const std::vector<melonDS::u8>* snap = nullptr;
+
+    if (NetSession->IsHosting())
+    {
+        // the reference: send it to the PCs that load it, then load it here as everyone does
+        if (!NP::SaveSnapshot(Consoles.data(), info.NumPlayers, *Lock, own))
+        {
+            Stop("could not save the game's state for a resync");
+            return false;
+        }
+        NetSession->SendState(copy, own);
+        snap = &own;
+    }
+    else if (copy.Targets & (1 << me))
+    {
+        snap = NetSession->StateFor(copy.Frame);
+        if (!snap) return false;        // still on its way
+    }
+    else
+    {
+        // in sync: reload our own state of this frame (the JIT's cache starts empty everywhere)
+        if (!NP::SaveSnapshot(Consoles.data(), info.NumPlayers, *Lock, own))
+        {
+            Stop("could not save the game's state for a resync");
+            return false;
+        }
+        snap = &own;
+    }
+
+    if (!NP::LoadSnapshot(Consoles.data(), info.NumPlayers, *Lock, snap->data(), snap->size()))
+    {
+        Stop("the game's state for a resync did not load");
+        return false;
+    }
+    if (copy.Targets & (1 << me))
+        Local->osdAddMessage(0, "Netplay: repaired (loaded the host's game at frame %u)", copy.Frame);
+    else if (copy.Joins)
+        Local->osdAddMessage(0, "Netplay: everyone is back in the game");
+    NetSession->ResyncDone(copy.Frame);
+    return true;
+}
+
+void NetplayController::ShowNotices()
+{
+    std::string note;
+    while (NetSession->PopNotice(note))
+        Local->osdAddMessage(0xFFA000, "Netplay: %s", note.c_str());
+}
+
+void NetplayController::NoteWaiting()
+{
+    // after a second without someone's input, say who the game is waiting for (every 3 s)
+    auto now = std::chrono::steady_clock::now();
+    if (now - FrameAsked < std::chrono::seconds(1) || now - LastWaitNote < std::chrono::seconds(3))
+        return;
+    melonDS::u8 missing = NetSession->MissingInputs(Frame);
+    if (!missing) return;
+    std::string who;
+    for (int s = 0; s < NP::kMaxConsoles; s++)
+    {
+        if (!(missing & (1 << s))) continue;
+        if (!who.empty()) who += ", ";
+        who += "P" + std::to_string(s + 1);
+    }
+    Local->osdAddMessage(0xFFA000, "Netplay: waiting for %s...", who.c_str());
+    LastWaitNote = now;
 }
 
 bool NetplayController::Step()
@@ -250,23 +345,34 @@ bool NetplayController::Step()
         FrameAsked = std::chrono::steady_clock::now();
     }
 
-    // wait a little for the others' input; the caller comes back if it is not there yet
+    // wait a little for the others' input (and a resync's snapshot); the caller comes back if it
+    // is not there yet
     auto give_up = std::chrono::steady_clock::now() + std::chrono::milliseconds(15);
     NetSession->Poll(0);
-    while (!NetSession->HaveInputs(Frame))
+    for (;;)
     {
+        ShowNotices();
         if (NetSession->GetPhase() == NP::Session::Phase::Ended)
         {
             Stop(NetSession->Error());
             return false;
         }
-        if (std::chrono::steady_clock::now() >= give_up) return false;
+        const NP::Resync* rs = NetSession->ResyncAt(Frame);
+        if (!(rs && !DoResync(*rs)) && NetSession->HaveInputs(Frame)) break;
+        if (!IsRunning.load()) return false;
+        if (std::chrono::steady_clock::now() >= give_up)
+        {
+            NoteWaiting();
+            return false;
+        }
         NetSession->Poll(1);
     }
 
     NP::ConsoleInput inputs[NP::kMaxConsoles];
     NetSession->TakeInputs(Frame, inputs);
     Lock->RunFrame(inputs);
+    if (static_cast<melonDS::s64>(Frame) == CorruptAt)
+        Consoles[me]->MainRAM[0x300000] ^= 0xFF;
     Submitted = false;
 
     if ((Frame + 1) % NP::kHashPeriod == 0 || HashFile)
@@ -289,12 +395,7 @@ bool NetplayController::Step()
             if ((Frame + 1) % 60 == 0) std::fflush(HashFile);
         }
     }
-    if (NetSession->Desynced() && !DesyncShown)
-    {
-        DesyncShown = true;
-        Local->osdAddMessage(0xFFA000, "Netplay: the consoles went out of sync at frame %lld",
-                             static_cast<long long>(NetSession->DesyncAt()));
-    }
+    ShowNotices();
 
     Frame++;
     (void)me;
