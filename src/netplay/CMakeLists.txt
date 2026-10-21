@@ -3,6 +3,7 @@
 include(FixInterfaceIncludes)
 
 add_library(netplay STATIC
+    Consoles.cpp
     Fiber.cpp
     Lockstep.cpp
     Session.cpp

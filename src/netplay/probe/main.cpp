@@ -46,12 +46,11 @@
 #include "NDSCart.h"
 #include "Args.h"
 #include "SPI_Firmware.h"
+#include "../Consoles.h"
 #include "../Lockstep.h"
 #include "../Session.h"
 #include "Probe.h"
 
-#define XXH_INLINE_ALL
-#include "xxhash/xxhash.h"
 
 using namespace melonDS;
 using melonDS::Netplay::ConsoleInput;
@@ -96,16 +95,6 @@ struct Options
     std::string Name = "PLAYER";
     int Delay = 4;
     int LagMs = 0;
-};
-
-// What the consoles boot with (local: generated; net: the host's START).
-struct Setup
-{
-    int Consoles = 2;
-    bool Jit = true;
-    std::array<std::string, Netplay::kMaxConsoles> Names;
-    std::array<std::vector<u8>, Netplay::kMaxConsoles> Saves;
-    int Year = 2026, Month = 1, Day = 1, Hour = 12, Minute = 0, Second = 0;
 };
 
 static u32 KeyBit(const std::string& name)
@@ -171,32 +160,6 @@ static std::string BaseName(const std::string& path)
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
-// Firmware as the frontend makes it for instance `id` (EmuInstance::customizeFirmware).
-static Firmware MakeFirmware(int id, const std::string& name)
-{
-    Firmware firmware(0);
-    auto& user = firmware.GetEffectiveUserData();
-    std::string nick = name.empty() ? "PLAYER" + std::to_string(id + 1) : name;
-    size_t len = nick.size() < 10 ? nick.size() : 10;
-    for (size_t i = 0; i < len; i++)
-        user.Nickname[i] = static_cast<char16_t>(nick[i]);
-    user.NameLength = static_cast<u16>(len);
-
-    if (id > 0)
-    {
-        auto& header = firmware.GetHeader();
-        MacAddress mac = header.MacAddr;
-        mac[3] += id;
-        mac[4] += id * 0x44;
-        mac[5] += id * 0x10;
-        mac[0] &= 0xFC;
-        header.MacAddr = mac;
-        header.UpdateChecksum();
-    }
-    firmware.UpdateChecksums();
-    return firmware;
-}
-
 static void WriteShot(const std::string& path, NDS& nds)
 {
     std::FILE* f = std::fopen(path.c_str(), "wb");
@@ -221,49 +184,30 @@ using InputSource = std::function<bool(u32 frame, ConsoleInput* inputs)>;
 using FrameHook = std::function<void(u32 frame, const u64* hashes, int count)>;
 
 // One full run: hashes[frame * consoles + console]; empty if the input source gave up.
-static std::vector<u64> Run(const Options& opt, const Setup& setup, const std::vector<u8>& rom,
-                            const InputSource& inputsFor, const FrameHook& afterFrame, int runIndex)
+static std::vector<u64> Run(const Options& opt, const Netplay::StartInfo& setup,
+                            const std::vector<u8>& rom, const InputSource& inputsFor,
+                            const FrameHook& afterFrame, int runIndex)
 {
     Probe::CurrentSession = std::make_unique<Lockstep>();
-    std::vector<Probe::ConsoleContext> ctx(setup.Consoles);
+    std::vector<Probe::ConsoleContext> ctx(setup.NumPlayers);
     std::vector<std::unique_ptr<NDS>> consoles;
     std::string romName = BaseName(opt.Rom);
 
-    for (int i = 0; i < setup.Consoles; i++)
+    for (int i = 0; i < setup.NumPlayers; i++)
     {
         ctx[i].ID = i;
-        NDSArgs args {};
-        args.Firmware = MakeFirmware(i, setup.Names[i]);
-        if (!setup.Jit) args.JIT = std::nullopt;
-
-        auto nds = std::make_unique<NDS>(std::move(args), &ctx[i]);
-
-        NDSCart::NDSCartArgs cartArgs {};
-        if (!setup.Saves[i].empty())
-        {
-            cartArgs.SRAM = std::make_unique<u8[]>(setup.Saves[i].size());
-            std::memcpy(cartArgs.SRAM.get(), setup.Saves[i].data(), setup.Saves[i].size());
-            cartArgs.SRAMLength = static_cast<u32>(setup.Saves[i].size());
-        }
-        auto cart = NDSCart::ParseROM(rom.data(), static_cast<u32>(rom.size()), &ctx[i],
-                                      std::move(cartArgs));
-        if (!cart)
+        auto nds = Netplay::MakeMirror(setup, i, rom.data(), static_cast<u32>(rom.size()), romName,
+                                       &ctx[i]);
+        if (!nds)
         {
             std::fprintf(stderr, "the ROM did not parse\n");
             std::exit(1);
         }
-        nds->SetNDSCart(std::move(cart));
-        nds->Reset();
-        nds->SetupDirectBoot(romName);
-        nds->RTC.SetDateTime(setup.Year, setup.Month, setup.Day, setup.Hour, setup.Minute,
-                             setup.Second);
-        nds->Start();
-
         Probe::Session().AddConsole(i, nds.get());
         consoles.push_back(std::move(nds));
     }
 
-    std::vector<u64> hashes(static_cast<size_t>(opt.Frames) * setup.Consoles);
+    std::vector<u64> hashes(static_cast<size_t>(opt.Frames) * setup.NumPlayers);
     ConsoleInput inputs[Netplay::kMaxConsoles];
     auto start = std::chrono::steady_clock::now();
     auto fromStart = start;
@@ -287,20 +231,19 @@ static std::vector<u64> Run(const Options& opt, const Setup& setup, const std::v
             std::this_thread::sleep_until(due);
         }
 
-        u64* row = &hashes[static_cast<size_t>(frame) * setup.Consoles];
-        for (int i = 0; i < setup.Consoles; i++)
+        u64* row = &hashes[static_cast<size_t>(frame) * setup.NumPlayers];
+        for (int i = 0; i < setup.NumPlayers; i++)
         {
-            NDS& nds = *consoles[i];
-            row[i] = XXH3_64bits(nds.MainRAM, nds.MainRAMMask + 1);
+            row[i] = Netplay::HashConsole(*consoles[i]);
         }
-        if (afterFrame) afterFrame(frame, row, setup.Consoles);
+        if (afterFrame) afterFrame(frame, row, setup.NumPlayers);
 
         if (runIndex == 0 && !opt.ShotPrefix.empty())
         {
             for (u32 shot : opt.ShotFrames)
             {
                 if (shot != frame) continue;
-                for (int i = 0; i < setup.Consoles; i++)
+                for (int i = 0; i < setup.NumPlayers; i++)
                 {
                     char path[512];
                     std::snprintf(path, sizeof path, "%s_f%u_c%d.ppm", opt.ShotPrefix.c_str(),
@@ -314,7 +257,7 @@ static std::vector<u64> Run(const Options& opt, const Setup& setup, const std::v
     double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     std::printf("run %d: %u frames x %d consoles in %.1f s (%.1f fps, %.0f%% speed), "
                 "%llu switches, %llu timeouts\n",
-                runIndex, opt.Frames, setup.Consoles, secs, opt.Frames / secs,
+                runIndex, opt.Frames, setup.NumPlayers, secs, opt.Frames / secs,
                 100.0 * opt.Frames / secs / 59.8261,
                 static_cast<unsigned long long>(Probe::Session().Switches),
                 static_cast<unsigned long long>(Probe::Session().Timeouts));
@@ -349,9 +292,9 @@ static void WriteHashes(const std::string& path, const std::vector<u64>& hashes,
 
 static int RunLocal(const Options& opt, const std::vector<u8>& rom, const std::vector<ScriptEvent>& script)
 {
-    Setup setup;
-    setup.Consoles = opt.Consoles;
-    setup.Jit = opt.Jit;
+    Netplay::StartInfo setup;
+    setup.NumPlayers = opt.Consoles;
+    setup.JIT = opt.Jit;
     for (int i = 0; i < opt.Consoles; i++)
     {
         setup.Names[i] = "PLAYER" + std::to_string(i + 1);
@@ -391,10 +334,7 @@ static int RunLocal(const Options& opt, const std::vector<u8>& rom, const std::v
 
 static int RunNet(const Options& opt, const std::vector<u8>& rom, const std::vector<ScriptEvent>& script)
 {
-    Netplay::RomHash romHash {};
-    XXH128_hash_t h = XXH3_128bits(rom.data(), rom.size());
-    std::memcpy(romHash.data(), &h.low64, 8);
-    std::memcpy(romHash.data() + 8, &h.high64, 8);
+    Netplay::RomHash romHash = Netplay::HashRom(rom.data(), static_cast<u32>(rom.size()));
 
     std::vector<u8> mySave;
     if (!opt.Saves.empty() && !opt.Saves[0].empty()) mySave = ReadFile(opt.Saves[0]);
@@ -441,13 +381,7 @@ static int RunNet(const Options& opt, const std::vector<u8>& rom, const std::vec
     std::printf("session: %d players, I am P%d, input delay %d\n", info.NumPlayers, me + 1,
                 info.InputDelay);
 
-    Setup setup;
-    setup.Consoles = info.NumPlayers;
-    setup.Jit = info.JIT;
-    setup.Names = info.Names;
-    setup.Saves = info.Saves;
-    setup.Year = info.Year; setup.Month = info.Month; setup.Day = info.Day;
-    setup.Hour = info.Hour; setup.Minute = info.Minute; setup.Second = info.Second;
+    const Netplay::StartInfo& setup = info;
 
     auto inputs = [&](u32 frame, ConsoleInput* out) {
         // our input for the frame `delay` ahead, then every player's for this one
@@ -480,7 +414,7 @@ static int RunNet(const Options& opt, const std::vector<u8>& rom, const std::vec
                 static_cast<unsigned long long>(net.WaitMs),
                 net.Desynced() ? ("DESYNC at frame " + std::to_string(net.DesyncAt())).c_str()
                                : "no desync reported");
-    if (!opt.HashOut.empty()) WriteHashes(opt.HashOut, hashes, setup.Consoles, opt.Frames);
+    if (!opt.HashOut.empty()) WriteHashes(opt.HashOut, hashes, setup.NumPlayers, opt.Frames);
     net.Leave();
     return hashes.empty() || net.Desynced() ? 1 : 0;
 }
