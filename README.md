@@ -12,6 +12,22 @@
 <a href="https://github.com/melonDS-emu/melonDS/actions/workflows/build-macos.yml?query=event%3Apush"><img src="https://github.com/melonDS-emu/melonDS/actions/workflows/build-macos.yml/badge.svg" /></a>
 <a href="https://github.com/melonDS-emu/melonDS/actions/workflows/build-bsd.yml?query=event%3Apush"><img src="https://github.com/melonDS-emu/melonDS/actions/workflows/build-bsd.yml/badge.svg" /></a>
 </p>
+
+> **This is a fork of melonDS 1.1 with internet netplay**, made for a 4-player co-op mod of
+> Kingdom Hearts 358/2 Days. It is not an official melonDS release and is not supported by
+> the melonDS team.
+>
+> - *System > Multiplayer > Netplay (internet)...* hosts or joins a session over UDP (default
+>   port 7065). Every PC runs every player's DS in lockstep and only controller input goes over
+>   the network, so the local wireless link between the consoles never leaves the PC.
+> - Players who drop can join again into their seat; PCs that go out of sync are repaired from
+>   the host's state automatically.
+> - Player guide: [packaging/README-netplay.txt](packaging/README-netplay.txt). Design notes:
+>   [src/netplay/Session.h](src/netplay/Session.h), [src/netplay/Lockstep.h](src/netplay/Lockstep.h).
+> - Builds as melonDS does ([BUILD.md](BUILD.md)), plus `enet` and `zstd`;
+>   `packaging/package-win.sh` makes a standalone Windows folder (MSYS2 UCRT64).
+> - No game data is included: every player needs their own copy of the game.
+
 DS emulator, sorta
 
 The goal is to do things right and fast, akin to blargSNES (but hopefully better). But also to, you know, have a fun challenge :)

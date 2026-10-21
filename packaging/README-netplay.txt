@@ -39,4 +39,4 @@ Good to know
 License
 melonDS is free software under the GNU GPL version 3 (LICENSE.txt). The source
 code of this build, including the netplay changes, is available at:
-  (link to be added when the source is published)
+  https://github.com/AlexForney/melonDS-coop-netplay  (branch coop-netplay)
