@@ -93,6 +93,12 @@ public:
     Phase GetPhase() const { return CurPhase; }
     int LocalSlot() const { return MySlot; }
     int LobbyCount() const;             // players in the lobby (host included)
+    bool LobbyUsed(int slot) const { return slot >= 0 && slot < kMaxConsoles && SlotUsed[slot]; }
+    std::string LobbyName(int slot) const
+    {
+        return slot >= 0 && slot < kMaxConsoles ? LobbyNames[slot] : std::string();
+    }
+    bool IsHosting() const { return IsHost; }
     const StartInfo& Start() const { return Info; }
     const std::string& Error() const { return ErrorText; }
 

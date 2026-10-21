@@ -58,6 +58,8 @@ set(SOURCES_QT_SDL
     CLI.cpp
 
     LANDialog.cpp
+    NetplayController.cpp
+    NetplayCoopDialog.cpp
     NetplayDialog.cpp
 )
 
@@ -97,6 +99,7 @@ add_subdirectory("../../net"
     ${CMAKE_BINARY_DIR}/net)
 
 target_link_libraries(melonDS PRIVATE net-utils)
+target_link_libraries(melonDS PRIVATE netplay)
 
 if (WIN32)
     target_link_libraries(melonDS PUBLIC opengl32)

@@ -49,6 +49,8 @@
 #include "OpenGLSupport.h"
 #include "duckstation/gl/context.h"
 
+#include "NetplayCoopDialog.h"
+#include "netplay/Session.h"
 #include "main.h"
 #include "version.h"
 
@@ -384,6 +386,29 @@ int main(int argc, char** argv)
 
         if (options->fullscreen)
             win->toggleFullscreen();
+
+        if (options->netplayHost.has_value() || options->netplayJoin.has_value())
+        {
+            NetplayCoopDialog::AutoStart autostart;
+            autostart.Host = options->netplayHost.has_value();
+            autostart.Port = autostart.Host ? *options->netplayHost : melonDS::Netplay::kDefaultPort;
+            if (options->netplayJoin.has_value())
+            {
+                QString target = *options->netplayJoin;
+                int colon = target.lastIndexOf(':');
+                if (colon > 0)
+                {
+                    autostart.Port = target.mid(colon + 1).toInt();
+                    target = target.left(colon);
+                }
+                autostart.Address = target;
+            }
+            autostart.Name = options->netplayName;
+            autostart.Players = options->netplayPlayers;
+            autostart.Delay = options->netplayDelay;
+            autostart.Bind = options->netplayBind;
+            NetplayCoopDialog::open(win, win->getEmuInstance(), &autostart);
+        }
     }
 
     int ret = melon.exec();

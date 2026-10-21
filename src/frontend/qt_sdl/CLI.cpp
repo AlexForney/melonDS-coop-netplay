@@ -49,11 +49,25 @@ CommandLineOptions* ManageArgs(QApplication& melon)
     parser.addOption(QCommandLineOption({"A", "archive-file-gba"}, "Specify file to load inside an archive given (GBA)", "rom"));
 #endif
 
+    parser.addOption(QCommandLineOption("netplay-host", "Host a netplay session on this UDP port", "port"));
+    parser.addOption(QCommandLineOption("netplay-join", "Join the netplay session at address[:port]", "address"));
+    parser.addOption(QCommandLineOption("netplay-name", "Player name for netplay", "name", "PLAYER"));
+    parser.addOption(QCommandLineOption("netplay-players", "Host: start once this many players are in", "count", "0"));
+    parser.addOption(QCommandLineOption("netplay-delay", "Host: input delay in frames", "frames", "4"));
+    parser.addOption(QCommandLineOption("netplay-bind", "Host: listen on this address only", "address"));
+
     parser.process(melon);
 
     CommandLineOptions* options = new CommandLineOptions;
 
     options->fullscreen = parser.isSet("fullscreen");
+
+    if (parser.isSet("netplay-host")) options->netplayHost = parser.value("netplay-host").toInt();
+    if (parser.isSet("netplay-join")) options->netplayJoin = parser.value("netplay-join");
+    options->netplayName = parser.value("netplay-name");
+    options->netplayPlayers = parser.value("netplay-players").toInt();
+    options->netplayDelay = parser.value("netplay-delay").toInt();
+    if (parser.isSet("netplay-bind")) options->netplayBind = parser.value("netplay-bind");
 
     QStringList posargs = parser.positionalArguments();
     switch (posargs.size())

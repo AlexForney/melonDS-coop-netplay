@@ -188,6 +188,7 @@ private slots:
     void onMPNewInstance();
     void onLANStartHost();
     void onLANStartClient();
+    void onNetplayCoop();
     void onNPStartHost();
     void onNPStartClient();
     void onNPTest();
@@ -313,6 +314,7 @@ public:
     QAction* actMPNewInstance;
     QAction* actLANStartHost;
     QAction* actLANStartClient;
+    QAction* actNetplayCoop;
     QAction* actNPStartHost;
     QAction* actNPStartClient;
     QAction* actNPTest;

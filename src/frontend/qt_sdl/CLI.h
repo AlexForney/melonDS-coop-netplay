@@ -34,6 +34,14 @@ struct CommandLineOptions
     std::optional<QString> gbaRomArchivePath;
     bool fullscreen;
     bool boot;
+
+    // netplay (internet): host on a port or join "address[:port]" once the ROM is up
+    std::optional<int> netplayHost;
+    std::optional<QString> netplayJoin;
+    QString netplayName;
+    int netplayPlayers = 0;             // host: start once this many players are in
+    int netplayDelay = 4;
+    QString netplayBind;                // host: listen on this address only (tests: 127.0.0.1)
 };
 
 extern CommandLineOptions* ManageArgs(QApplication& melon);

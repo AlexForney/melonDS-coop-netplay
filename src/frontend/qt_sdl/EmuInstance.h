@@ -374,6 +374,7 @@ private:
 
     friend class EmuThread;
     friend class MainWindow;
+    friend class NetplayController;
 };
 
 #endif //EMUINSTANCE_H

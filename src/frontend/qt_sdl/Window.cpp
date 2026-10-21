@@ -16,6 +16,7 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
+#include "NetplayCoopDialog.h"
 #include "NDS.h"
 #include <stdlib.h>
 #include <time.h>
@@ -461,6 +462,11 @@ MainWindow::MainWindow(int id, EmuInstance* inst, QWidget* parent) :
 
                 actLANStartClient = submenu->addAction("Join LAN game");
                 connect(actLANStartClient, &QAction::triggered, this, &MainWindow::onLANStartClient);
+
+                submenu->addSeparator();
+
+                actNetplayCoop = submenu->addAction("Netplay (internet)...");
+                connect(actNetplayCoop, &QAction::triggered, this, &MainWindow::onNetplayCoop);
 
                 /*submenu->addSeparator();
 
@@ -1796,6 +1802,11 @@ void MainWindow::onLANStartClient()
 {
     if (!lanWarning(false)) return;
     LANStartClientDialog::openDlg(this);
+}
+
+void MainWindow::onNetplayCoop()
+{
+    NetplayCoopDialog::open(this, emuInstance);
 }
 
 void MainWindow::onNPStartHost()

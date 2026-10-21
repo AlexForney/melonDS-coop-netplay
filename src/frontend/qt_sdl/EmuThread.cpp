@@ -16,6 +16,7 @@
     with melonDS. If not, see http://www.gnu.org/licenses/.
 */
 
+#include "NetplayController.h"
 #include <stdlib.h>
 #include <time.h>
 #include <stdio.h>
@@ -246,6 +247,11 @@ void EmuThread::run()
                     videoRenderer = 0;
                 }
 
+                // netplay: the software renderer on every console of every PC (the game can read
+                // rendered 3D back)
+                if (NetplayController::Current() && NetplayController::Current()->Running())
+                    videoRenderer = 0;
+
                 updateRenderer();
 
                 videoSettingsDirty = false;
@@ -260,7 +266,10 @@ void EmuThread::run()
             else
                 emuInstance->nds->ReleaseScreen();
 
-            if (emuInstance->hotkeyPressed(HK_Lid))
+            NetplayController* netplay = NetplayController::Current();
+            bool inNetplay = netplay && netplay->Running() && netplay->Instance() == emuInstance;
+
+            if (emuInstance->hotkeyPressed(HK_Lid) && !inNetplay)
             {
                 bool lid = !emuInstance->nds->IsLidClosed();
                 emuInstance->nds->SetLidClosed(lid);
@@ -299,7 +308,17 @@ void EmuThread::run()
 
             // emulate
             u32 nlines;
-            if (emuInstance->nds->GPU.GetRenderer3D().NeedsShaderCompile())
+            if (inNetplay)
+            {
+                // one lockstep frame of every player's console, once every input for it is in
+                if (!netplay->Step())
+                {
+                    handleMessages();
+                    continue;
+                }
+                nlines = 263;
+            }
+            else if (emuInstance->nds->GPU.GetRenderer3D().NeedsShaderCompile())
             {
                 compileShaders();
                 nlines = 1;
@@ -482,6 +501,31 @@ void EmuThread::handleMessages()
     while (!msgQueue.empty())
     {
         Message msg = msgQueue.dequeue();
+
+        NetplayController* np = NetplayController::Current();
+        if (np && np->Running() && np->Instance() == emuInstance)
+        {
+            // what would make this console differ from its copies on the other PCs
+            switch (msg.type)
+            {
+            case msg_EmuPause: case msg_EmuUnpause: case msg_EmuFrameStep: case msg_EmuReset:
+            case msg_BootROM: case msg_BootFirmware: case msg_InsertCart: case msg_EjectCart:
+            case msg_InsertGBACart: case msg_InsertGBAAddon: case msg_EjectGBACart:
+            case msg_LoadState: case msg_UndoStateLoad: case msg_ImportSavefile:
+            case msg_EnableCheats:
+                msgResult = 0;
+                msgError = "Not available during a netplay session.";
+                emuInstance->osdAddMessage(0, "Not available during netplay");
+                msgSemaphore.release();
+                continue;
+            case msg_EmuStop:
+                np->Stop("stopped here");
+                break;
+            default:
+                break;
+            }
+        }
+
         switch (msg.type)
         {
         case msg_Exit:
@@ -659,6 +703,35 @@ void EmuThread::handleMessages()
 
         case msg_EnableCheats:
             emuInstance->enableCheats(msg.param.value<bool>());
+            break;
+
+        case msg_NetplayStart:
+            msgResult = 0;
+            if (NetplayController* np = NetplayController::Current())
+            {
+                std::string error;
+                if (np->Boot(&error))
+                {
+                    msgResult = 1;
+                    emuStatus = emuStatus_Running;
+                    emuPauseStack = emuPauseStackRunning;
+                    emuActive = true;
+                    emuInstance->audioEnable();
+                    videoSettingsDirty = true;      // the software renderer (above)
+                    lastVideoRenderer = -1;
+                    emit windowEmuStart();
+                }
+                else
+                {
+                    msgError = QString::fromStdString(error);
+                    emuInstance->osdAddMessage(0xFF4040, "Netplay: %s", error.c_str());
+                }
+            }
+            break;
+
+        case msg_NetplayStop:
+            if (NetplayController* np = NetplayController::Current())
+                np->Stop(msg.param.value<QString>().toStdString());
             break;
         }
 

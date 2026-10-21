@@ -84,6 +84,9 @@ public:
         msg_ImportSavefile,
 
         msg_EnableCheats,
+
+        msg_NetplayStart,           // the session's START came: boot every console (netplay)
+        msg_NetplayStop,
     };
 
     struct Message
