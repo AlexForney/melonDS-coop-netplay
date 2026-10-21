@@ -1,0 +1,82 @@
+name: Netplay builds
+
+# Builds of the coop-netplay branch: a Linux AppImage (plus the headless determinism probe) and
+# the standalone Windows folder that packaging/package-win.sh makes (MSYS2 UCRT64, Qt DLLs).
+
+on:
+  push:
+    branches:
+      - coop-netplay
+  workflow_dispatch:
+
+env:
+  MELONDS_GIT_BRANCH: ${{ github.ref }}
+  MELONDS_GIT_HASH: ${{ github.sha }}
+  MELONDS_BUILD_PROVIDER: GitHub Actions (coop-netplay)
+
+jobs:
+  linux:
+    name: Linux x86_64
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Check out sources
+      uses: actions/checkout@v4
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install --allow-downgrades cmake ninja-build extra-cmake-modules libpcap0.8-dev libsdl2-dev libenet-dev \
+          qt6-{base,base-private,multimedia}-dev libqt6svg6-dev libarchive-dev libzstd-dev libfuse2 libfaad-dev
+    - name: Configure
+      run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DMELONDS_EMBED_BUILD_INFO=ON
+    - name: Build
+      run: |
+        cmake --build build
+        DESTDIR=AppDir cmake --install build
+    - name: Fetch AppImage tools
+      run: |
+        wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+        wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+        chmod a+x linuxdeploy-*.AppImage
+    - name: Build the AppImage
+      env:
+        QMAKE: /usr/lib/qt6/bin/qmake
+      run: ./linuxdeploy-x86_64.AppImage --appdir AppDir --plugin qt --output appimage
+    - name: Collect
+      run: |
+        mkdir -p out
+        cp melonDS*.AppImage out/
+        cp build/melonDS-netprobe out/
+        cp packaging/README-netplay.txt out/README.txt
+        cp LICENSE out/LICENSE.txt
+    - uses: actions/upload-artifact@v4
+      with:
+        name: melonDS-coop-netplay-linux-x86_64
+        path: out/
+
+  windows:
+    name: Windows x86_64
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+    - name: Check out sources
+      uses: actions/checkout@v4
+    - name: Set up MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: ucrt64
+        update: true
+        pacboy: >-
+          toolchain:p cmake:p ninja:p pkgconf:p SDL2:p libarchive:p enet:p zstd:p faad2:p
+          qt6-base:p qt6-svg:p qt6-multimedia:p qt6-tools:p
+    - name: Configure
+      run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMELONDS_EMBED_BUILD_INFO=ON
+    - name: Build
+      run: cmake --build build
+    - name: Package
+      run: bash packaging/package-win.sh "$PWD/dist/melonDS-coop-netplay"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: melonDS-coop-netplay-windows-x86_64
+        path: dist/
