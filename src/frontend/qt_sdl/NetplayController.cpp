@@ -235,6 +235,7 @@ bool NetplayController::Boot(std::string* error)
     LoadTestHooks();
     BootTime = std::chrono::steady_clock::now();
     LastWaitNote = BootTime;
+    UpdateDisplay();
     IsRunning.store(true);
     if (NetSession->Rejoined())
         Local->osdAddMessage(0, "Netplay: back in the game as P%d", me + 1);
@@ -294,8 +295,35 @@ bool NetplayController::DoResync(const NP::Resync& rs)
 void NetplayController::ShowNotices()
 {
     std::string note;
+    bool any = false;
     while (NetSession->PopNotice(note))
+    {
         Local->osdAddMessage(0xFFA000, "Netplay: %s", note.c_str());
+        any = true;
+    }
+    if (any) UpdateDisplay();
+}
+
+void NetplayController::UpdateDisplay()
+{
+    Display d;
+    d.Players = NetSession->Start().NumPlayers;
+    d.Me = NetSession->LocalSlot();
+    for (int s = 0; s < NP::kMaxConsoles; s++)
+    {
+        d.Names[s] = NetSession->LobbyName(s);
+        d.Connected[s] = s < d.Players && NetSession->Connected(s);
+    }
+    d.Desynced = NetSession->Desynced();
+    d.Frame = Frame;
+    std::lock_guard<std::mutex> lock(DisplayLock);
+    Shown = std::move(d);
+}
+
+NetplayController::Display NetplayController::GetDisplay() const
+{
+    std::lock_guard<std::mutex> lock(DisplayLock);
+    return Shown;
 }
 
 void NetplayController::NoteWaiting()
@@ -398,6 +426,7 @@ bool NetplayController::Step()
     ShowNotices();
 
     Frame++;
+    if (Frame % 15 == 0) UpdateDisplay();
     (void)me;
     return true;
 }

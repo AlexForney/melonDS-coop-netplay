@@ -225,6 +225,26 @@ void NetplayCoopDialog::onTick()
     NP::Session& net = np->Net();
     if (!StartSent) np->PollLobby();
 
+    // during the game the session belongs to the emulation thread: show what it publishes
+    if (np->Running())
+    {
+        NetplayController::Display d = np->GetDisplay();
+        Players->clear();
+        for (int s = 0; s < d.Players; s++)
+        {
+            QString line = QString("P%1  %2").arg(s + 1).arg(QString::fromStdString(d.Names[s]));
+            if (s == 0) line += "  (host)";
+            if (s == d.Me) line += "  - you";
+            else if (!d.Connected[s]) line += "  - left (can join again)";
+            Players->addItem(line);
+        }
+        StartButton->setEnabled(false);
+        Status->setText(QString("Playing: P%1 of %2. Frame %3.%4")
+                            .arg(d.Me + 1).arg(d.Players).arg(d.Frame)
+                            .arg(d.Desynced ? "  Out of sync: repairing..." : ""));
+        return;
+    }
+
     Players->clear();
     for (int s = 0; s < NP::kMaxConsoles; s++)
     {
@@ -232,8 +252,6 @@ void NetplayCoopDialog::onTick()
         QString line = QString("P%1  %2").arg(s + 1).arg(QString::fromStdString(net.LobbyName(s)));
         if (s == 0) line += "  (host)";
         if (s == net.LocalSlot()) line += "  - you";
-        else if (net.GetPhase() == NP::Session::Phase::Running && !net.Connected(s))
-            line += "  - left (can join again)";
         Players->addItem(line);
     }
 
@@ -267,10 +285,7 @@ void NetplayCoopDialog::onTick()
             StartSent = true;
             Inst->getEmuThread()->sendMessage({.type = EmuThread::msg_NetplayStart});
         }
-        Status->setText(QString("Playing: P%1 of %2. Frame %3.%4")
-                            .arg(net.LocalSlot() + 1).arg(net.Start().NumPlayers)
-                            .arg(np->FrameNumber())
-                            .arg(net.Desynced() ? "  Out of sync: repairing..." : ""));
+        Status->setText("Starting...");
         break;
     case NP::Session::Phase::Ended:
     case NP::Session::Phase::Idle:

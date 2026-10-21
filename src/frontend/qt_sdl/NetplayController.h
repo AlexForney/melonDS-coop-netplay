@@ -34,6 +34,7 @@
 #include <cstdio>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,19 @@ public:
 
     melonDS::u32 FrameNumber() const { return Frame; }
 
+    // What the dialog shows while the game runs (the session itself belongs to the emulation
+    // thread then): any thread.
+    struct Display
+    {
+        int Players = 0;
+        int Me = -1;
+        std::array<std::string, melonDS::Netplay::kMaxConsoles> Names;
+        std::array<bool, melonDS::Netplay::kMaxConsoles> Connected {};
+        bool Desynced = false;
+        melonDS::u32 Frame = 0;
+    };
+    Display GetDisplay() const;
+
 private:
     explicit NetplayController(EmuInstance* inst);
     ~NetplayController();
@@ -103,6 +117,10 @@ private:
     std::chrono::steady_clock::time_point BootTime;
     std::chrono::steady_clock::time_point FrameAsked;    // when this frame's input went out
     std::chrono::steady_clock::time_point LastWaitNote;  // the last "waiting for" message
+
+    mutable std::mutex DisplayLock;
+    Display Shown;
+    void UpdateDisplay();
 
     // The resync due before this frame; false while its snapshot has not arrived.
     bool DoResync(const melonDS::Netplay::Resync& rs);
