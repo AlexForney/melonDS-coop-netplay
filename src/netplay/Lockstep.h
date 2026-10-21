@@ -103,7 +103,7 @@ private:
         Lockstep* Owner = nullptr;
         int ID = -1;
         NDS* Nds = nullptr;
-        Fiber* Fiber = nullptr;
+        Fiber* Context = nullptr;           // its fiber
         State St = State::Idle;
         Wait W = Wait::None;
         bool TimedOut = false;

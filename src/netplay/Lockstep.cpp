@@ -38,7 +38,7 @@ Lockstep::~Lockstep()
 {
     for (Console* c : Consoles)
     {
-        Fiber_Free(c->Fiber);
+        Fiber_Free(c->Context);
         delete c;
     }
     // MainFiber is the thread itself: nothing to free but the wrapper
@@ -51,7 +51,7 @@ void Lockstep::AddConsole(int id, NDS* nds)
     c->Owner = this;
     c->ID = id;
     c->Nds = nds;
-    c->Fiber = Fiber_Create(kFiberStack, ConsoleMain, c);
+    c->Context = Fiber_Create(kFiberStack, ConsoleMain, c);
 
     auto it = Consoles.begin();
     while (it != Consoles.end() && (*it)->ID < id) ++it;
@@ -138,7 +138,7 @@ void Lockstep::RunFrame(const ConsoleInput* inputs)
         // set when a frame starts; the JIT's slow memory paths and fastmem fault handler use it);
         // consoles share this thread, so it follows each switch
         NDS::Current = pick->Nds;
-        Fiber_Switch(pick->Fiber);
+        Fiber_Switch(pick->Context);
         Current = nullptr;
     }
 
