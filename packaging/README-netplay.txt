@@ -25,9 +25,16 @@ Good to know
 - Input delay: 4 frames covers players up to about 65 ms apart (one way). If the
   game keeps stopping for a moment, the host can raise it before starting.
 - During a session, pause, reset, save states and cheats are off.
-- If a window says "the consoles went out of sync", the PCs no longer agree;
-  leave and start a new session (and please report it).
+- In-game saves go to each player's own save file, as usual.
 - Leaving: System > Multiplayer > Netplay (internet)... > Leave, or close melonDS.
+  A guest who leaves or loses the connection does not end the game: after a few
+  seconds it goes on, with their character standing still.
+- Coming back: open melonDS, load the ROM, and Join the same host with the same
+  name. You get your seat back where the game is now; everyone waits a moment
+  while your PC loads it. If the host leaves, the session ends for everyone.
+- If the PCs ever stop agreeing ("out of sync"), the host's game is copied to
+  the PC that differs within a second or two, by itself. Please report it if
+  it keeps happening.
 
 License
 melonDS is free software under the GNU GPL version 3 (LICENSE.txt). The source
