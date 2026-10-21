@@ -41,6 +41,9 @@ class NDS;
 namespace melonDS::Netplay
 {
 
+// The software 3D renderer on its own thread (default): no effect on the game, only on speed.
+extern bool Threaded3D;
+
 Firmware MakeFirmware(int slot, const std::string& name);
 std::optional<JITArgs> SessionJIT(bool enabled);
 

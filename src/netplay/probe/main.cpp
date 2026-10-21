@@ -483,6 +483,7 @@ static void Usage()
     std::fprintf(stderr,
         "usage: melonDS-netprobe --rom FILE [--consoles N] [--frames N] [--runs N] [--from F]\n"
         "       [--snapshot F]  (run 0 saves every console at F, later runs load it there)\n"
+        "       [--no-threaded3d]  (3D rendering on the emulation thread)\n"
         "       [--script FILE] [--save I=FILE]... [--hashes OUT] [--nojit]\n"
         "       [--shot PREFIX --shot-frame F]...\n"
         "   net: --host [--port P] --consoles N | --join ADDR [--port P]\n"
@@ -506,6 +507,7 @@ int main(int argc, char** argv)
         else if (a == "--runs") opt.Runs = std::atoi(next().c_str());
         else if (a == "--from") opt.From = static_cast<u32>(std::atol(next().c_str()));
         else if (a == "--snapshot") opt.SnapshotAt = static_cast<u32>(std::atol(next().c_str()));
+        else if (a == "--no-threaded3d") Netplay::Threaded3D = false;
         else if (a == "--script") opt.Script = next();
         else if (a == "--hashes") opt.HashOut = next();
         else if (a == "--nojit") opt.Jit = false;

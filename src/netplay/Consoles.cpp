@@ -66,6 +66,18 @@ std::optional<JITArgs> SessionJIT(bool enabled)
     return JITArgs {};
 }
 
+bool Threaded3D = true;
+
+// The software 3D renderer, drawing on its own thread when Threaded3D: the same pixels either
+// way (it draws from per-frame copies of polygon and texture memory, and the console waits for
+// each line it reads), so PCs may differ here; the local console follows the user's setting.
+static void UseSoftRenderer(NDS& nds)
+{
+    auto renderer = std::make_unique<SoftRenderer>();
+    renderer->SetThreaded(Threaded3D, nds.GPU);
+    nds.GPU.SetRenderer3D(std::move(renderer));
+}
+
 static void Boot(NDS& nds, const StartInfo& info, const std::string& romName)
 {
     nds.Reset();
@@ -93,6 +105,7 @@ std::unique_ptr<NDS> MakeMirror(const StartInfo& info, int slot, const u8* rom, 
     auto cart = NDSCart::ParseROM(rom, romLength, userdata, std::move(cartArgs));
     if (!cart) return nullptr;
     nds->SetNDSCart(std::move(cart));
+    UseSoftRenderer(*nds);
     Boot(*nds, info, romName);
     return nds;
 }
@@ -105,7 +118,7 @@ void SetUpLocal(NDS& nds, const StartInfo& info, int slot, const std::string& ro
     nds.SetJITArgs(SessionJIT(info.JIT));
     nds.SPU.SetInterpolation(AudioInterpolation::None);
     nds.SPU.SetDegrade10Bit(AudioBitDepth::Auto);
-    nds.GPU.SetRenderer3D(std::make_unique<SoftRenderer>());
+    UseSoftRenderer(nds);
     nds.AREngine.Cheats.clear();
 
     const std::vector<u8>& save = info.Saves[slot];
