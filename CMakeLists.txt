@@ -107,6 +107,11 @@ option(BUILD_QT_SDL "Build Qt/SDL frontend" ON)
 
 add_subdirectory(src)
 
+option(BUILD_NETPLAY "Build lockstep netplay and its determinism probe" ON)
+if (BUILD_NETPLAY)
+    add_subdirectory(src/netplay)
+endif()
+
 if (BUILD_QT_SDL)
     add_subdirectory(src/frontend/qt_sdl)
 endif()
