@@ -27,6 +27,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 #include "types.h"
 #include "Args.h"
 #include "SPI_Firmware.h"
@@ -52,6 +53,12 @@ void SetUpLocal(NDS& nds, const StartInfo& info, int slot, const std::string& ro
 
 u64 HashConsole(NDS& nds);
 RomHash HashRom(const u8* rom, u32 length);
+
+// Every console of a session and their link, between two frames, zstd-compressed: what a player
+// who rejoins, or a PC that went out of sync, loads to carry on from the host's frame.
+// `consoles` is indexed by slot.
+bool SaveSnapshot(NDS* const* consoles, int count, const Lockstep& link, std::vector<u8>& out);
+bool LoadSnapshot(NDS* const* consoles, int count, Lockstep& link, const u8* data, std::size_t len);
 
 }
 

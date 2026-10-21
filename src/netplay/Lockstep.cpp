@@ -145,6 +145,125 @@ void Lockstep::RunFrame(const ConsoleInput* inputs)
     Trim();
 }
 
+namespace
+{
+
+void Put32(std::vector<u8>& out, u32 v)
+{
+    for (int i = 0; i < 4; i++) out.push_back(static_cast<u8>(v >> (8 * i)));
+}
+
+void Put64(std::vector<u8>& out, u64 v)
+{
+    Put32(out, static_cast<u32>(v));
+    Put32(out, static_cast<u32>(v >> 32));
+}
+
+struct In
+{
+    const u8* P;
+    std::size_t N;
+    std::size_t Pos = 0;
+    bool Ok = true;
+
+    u32 Get32()
+    {
+        if (Pos + 4 > N) { Ok = false; return 0; }
+        u32 v = 0;
+        for (int i = 0; i < 4; i++) v |= static_cast<u32>(P[Pos++]) << (8 * i);
+        return v;
+    }
+    u64 Get64()
+    {
+        u64 lo = Get32();
+        return lo | (static_cast<u64>(Get32()) << 32);
+    }
+};
+
+}
+
+std::vector<u8> Lockstep::SaveState() const
+{
+    std::vector<u8> out;
+    auto putQueue = [&out](const std::deque<Packet>& q, u64 base) {
+        Put64(out, base);
+        Put32(out, static_cast<u32>(q.size()));
+        for (const Packet& p : q)
+        {
+            Put32(out, static_cast<u32>(p.Sender));
+            Put32(out, p.Type);
+            Put64(out, p.Timestamp);
+            Put32(out, static_cast<u32>(p.Data.size()));
+            out.insert(out.end(), p.Data.begin(), p.Data.end());
+        }
+    };
+    putQueue(Packets, PacketBase);
+    putQueue(Replies, ReplyBase);
+    Put32(out, Connected);
+    Put32(out, static_cast<u32>(HostID));
+    Put32(out, static_cast<u32>(LastHostID));
+    Put32(out, static_cast<u32>(Consoles.size()));
+    for (const Console* c : Consoles)
+    {
+        Put32(out, static_cast<u32>(c->ID));
+        Put64(out, c->PacketRead);
+        Put64(out, c->ReplyRead);
+    }
+    return out;
+}
+
+bool Lockstep::LoadState(const u8* data, std::size_t len)
+{
+    In in {data, len};
+    auto getQueue = [&in](std::deque<Packet>& q, u64& base) {
+        base = in.Get64();
+        u32 count = in.Get32();
+        q.clear();
+        for (u32 i = 0; i < count && in.Ok; i++)
+        {
+            Packet p;
+            p.Sender = static_cast<int>(in.Get32());
+            p.Type = in.Get32();
+            p.Timestamp = in.Get64();
+            u32 n = in.Get32();
+            if (n > kMaxFrameSize || in.Pos + n > in.N) { in.Ok = false; break; }
+            p.Data.assign(in.P + in.Pos, in.P + in.Pos + n);
+            in.Pos += n;
+            q.push_back(std::move(p));
+        }
+    };
+    std::deque<Packet> packets, replies;
+    u64 packetBase = 0, replyBase = 0;
+    getQueue(packets, packetBase);
+    getQueue(replies, replyBase);
+    u16 connected = static_cast<u16>(in.Get32());
+    int hostID = static_cast<int>(in.Get32());
+    int lastHostID = static_cast<int>(in.Get32());
+    u32 count = in.Get32();
+    if (!in.Ok || count != Consoles.size()) return false;
+    std::vector<std::pair<u64, u64>> reads(count);
+    for (u32 i = 0; i < count; i++)
+    {
+        u32 id = in.Get32();
+        reads[i] = {in.Get64(), in.Get64()};
+        if (!in.Ok || static_cast<int>(id) != Consoles[i]->ID) return false;
+    }
+
+    Packets = std::move(packets);
+    PacketBase = packetBase;
+    Replies = std::move(replies);
+    ReplyBase = replyBase;
+    Connected = connected;
+    HostID = hostID;
+    LastHostID = lastHostID;
+    for (u32 i = 0; i < count; i++)
+    {
+        Consoles[i]->PacketRead = reads[i].first;
+        Consoles[i]->ReplyRead = reads[i].second;
+    }
+    return true;
+}
+
 void Lockstep::Suspend(Console& c, Wait w)
 {
     c.St = State::Waiting;

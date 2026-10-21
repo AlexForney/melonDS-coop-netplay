@@ -23,6 +23,10 @@
 #include "NDSCart.h"
 #include "FreeBIOS.h"
 #include "GPU3D_Soft.h"
+#include "Lockstep.h"
+#include "Savestate.h"
+
+#include <zstd.h>
 
 #define XXH_INLINE_ALL
 #include "xxhash/xxhash.h"
@@ -122,6 +126,70 @@ RomHash HashRom(const u8* rom, u32 length)
     std::memcpy(out.data(), &h.low64, 8);
     std::memcpy(out.data() + 8, &h.high64, 8);
     return out;
+}
+
+// Snapshot, before compression: "NPSS", u32 count, then per console u32 length + its savestate,
+// then u32 length + the link's state.
+static constexpr u32 kSnapshotMagic = 0x5353504E;
+
+static void PutBlock(std::vector<u8>& out, const void* data, u32 len)
+{
+    for (int i = 0; i < 4; i++) out.push_back(static_cast<u8>(len >> (8 * i)));
+    const u8* p = static_cast<const u8*>(data);
+    out.insert(out.end(), p, p + len);
+}
+
+bool SaveSnapshot(NDS* const* consoles, int count, const Lockstep& link, std::vector<u8>& out)
+{
+    std::vector<u8> raw;
+    u32 head[2] = {kSnapshotMagic, static_cast<u32>(count)};
+    raw.insert(raw.end(), reinterpret_cast<u8*>(head), reinterpret_cast<u8*>(head) + sizeof head);
+    for (int s = 0; s < count; s++)
+    {
+        Savestate state;
+        if (state.Error || !consoles[s]->DoSavestate(&state) || state.Error) return false;
+        PutBlock(raw, state.Buffer(), state.Length());
+    }
+    std::vector<u8> linkState = link.SaveState();
+    PutBlock(raw, linkState.data(), static_cast<u32>(linkState.size()));
+
+    out.resize(ZSTD_compressBound(raw.size()));
+    std::size_t n = ZSTD_compress(out.data(), out.size(), raw.data(), raw.size(), 3);
+    if (ZSTD_isError(n)) return false;
+    out.resize(n);
+    return true;
+}
+
+bool LoadSnapshot(NDS* const* consoles, int count, Lockstep& link, const u8* data, std::size_t len)
+{
+    unsigned long long rawLen = ZSTD_getFrameContentSize(data, len);
+    if (rawLen == ZSTD_CONTENTSIZE_ERROR || rawLen == ZSTD_CONTENTSIZE_UNKNOWN || rawLen > (256u << 20))
+        return false;
+    std::vector<u8> raw(rawLen);
+    std::size_t n = ZSTD_decompress(raw.data(), raw.size(), data, len);
+    if (ZSTD_isError(n) || n != rawLen) return false;
+
+    std::size_t pos = 0;
+    auto get32 = [&](u32& v) {
+        if (pos + 4 > raw.size()) return false;
+        std::memcpy(&v, &raw[pos], 4);
+        pos += 4;
+        return true;
+    };
+    u32 magic, stored;
+    if (!get32(magic) || !get32(stored) || magic != kSnapshotMagic || stored != static_cast<u32>(count))
+        return false;
+    for (int s = 0; s < count; s++)
+    {
+        u32 blockLen;
+        if (!get32(blockLen) || pos + blockLen > raw.size()) return false;
+        Savestate state(&raw[pos], blockLen, false);
+        if (state.Error || !consoles[s]->DoSavestate(&state) || state.Error) return false;
+        pos += blockLen;
+    }
+    u32 linkLen;
+    if (!get32(linkLen) || pos + linkLen > raw.size()) return false;
+    return link.LoadState(&raw[pos], linkLen);
 }
 
 }

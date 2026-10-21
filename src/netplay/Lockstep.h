@@ -70,6 +70,11 @@ public:
     // One video frame of every console with these inputs (indexed by id).
     void RunFrame(const ConsoleInput* inputs);
 
+    // The link's own state between two frames (packets in flight, where each console reads), to
+    // go with the consoles' savestates in a snapshot. Load into a link with the same consoles.
+    std::vector<u8> SaveState() const;
+    bool LoadState(const u8* data, std::size_t len);
+
     // The wireless link, for Platform::MP_* (called on the console's own fiber).
     void Begin(int id);
     void End(int id);

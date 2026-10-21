@@ -83,6 +83,7 @@ struct Options
     int Consoles = 2;
     u32 Frames = 600;
     u32 From = 0;                       // also time the frames from here on
+    u32 SnapshotAt = 0;                 // run 0 saves a snapshot here; later runs load it and start here
     int Runs = 2;
     bool Jit = true;
     bool Realtime = false;              // pace frames at the DS's 59.83 fps
@@ -180,6 +181,8 @@ static void WriteShot(const std::string& path, NDS& nds)
     std::fclose(f);
 }
 
+static std::vector<u8> ProbeSnapshot;
+
 using InputSource = std::function<bool(u32 frame, ConsoleInput* inputs)>;
 using FrameHook = std::function<void(u32 frame, const u64* hashes, int count)>;
 
@@ -209,11 +212,66 @@ static std::vector<u64> Run(const Options& opt, const Netplay::StartInfo& setup,
 
     std::vector<u64> hashes(static_cast<size_t>(opt.Frames) * setup.NumPlayers);
     ConsoleInput inputs[Netplay::kMaxConsoles];
+    std::vector<NDS*> ptrs;
+    for (auto& c : consoles) ptrs.push_back(c.get());
+
+    u32 first = 0;
+    if (opt.SnapshotAt && runIndex > 0)
+    {
+        // fresh consoles, as a rejoining PC boots them, then the snapshot
+        auto t0 = std::chrono::steady_clock::now();
+        if (!Netplay::LoadSnapshot(ptrs.data(), setup.NumPlayers, Probe::Session(), ProbeSnapshot.data(),
+                                   ProbeSnapshot.size()))
+        {
+            std::fprintf(stderr, "run %d: the snapshot did not load\n", runIndex);
+            std::exit(1);
+        }
+        double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        std::printf("run %d: loaded the snapshot of frame %u in %.0f ms\n", runIndex, opt.SnapshotAt, ms);
+        if (const char* dump = std::getenv("NETPROBE_SNAPDUMP"))
+        {
+            // the snapshot as loaded, and saved again at once: any difference is state the load
+            // did not restore
+            std::vector<u8> again;
+            Netplay::SaveSnapshot(ptrs.data(), setup.NumPlayers, Probe::Session(), again);
+            for (int k = 0; k < 2; k++)
+            {
+                std::string path = std::string(dump) + (k ? "_again.zst" : "_saved.zst");
+                const std::vector<u8>& blob = k ? again : ProbeSnapshot;
+                if (std::FILE* f = std::fopen(path.c_str(), "wb"))
+                {
+                    std::fwrite(blob.data(), 1, blob.size(), f);
+                    std::fclose(f);
+                }
+            }
+        }
+        first = opt.SnapshotAt;
+    }
+
     auto start = std::chrono::steady_clock::now();
     auto fromStart = start;
 
-    for (u32 frame = 0; frame < opt.Frames; frame++)
+    for (u32 frame = first; frame < opt.Frames; frame++)
     {
+        if (opt.SnapshotAt && runIndex == 0 && frame == opt.SnapshotAt)
+        {
+            auto t0 = std::chrono::steady_clock::now();
+            if (!Netplay::SaveSnapshot(ptrs.data(), setup.NumPlayers, Probe::Session(), ProbeSnapshot))
+            {
+                std::fprintf(stderr, "the snapshot failed\n");
+                std::exit(1);
+            }
+            double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("run 0: snapshot of frame %u: %zu bytes in %.0f ms\n", frame, ProbeSnapshot.size(), ms);
+            // what every PC already running does at a resync: load the snapshot back (the JIT
+            // starts from an empty cache there, as on a PC that boots from the snapshot)
+            if (!Netplay::LoadSnapshot(ptrs.data(), setup.NumPlayers, Probe::Session(), ProbeSnapshot.data(),
+                                       ProbeSnapshot.size()))
+            {
+                std::fprintf(stderr, "run 0: the snapshot did not load back\n");
+                std::exit(1);
+            }
+        }
         if (frame == opt.From) fromStart = std::chrono::steady_clock::now();
         for (int i = 0; i < Netplay::kMaxConsoles; i++)
             inputs[i] = ConsoleInput{};
@@ -317,7 +375,8 @@ static int RunLocal(const Options& opt, const std::vector<u8>& rom, const std::v
     for (int r = 1; r < opt.Runs; r++)
     {
         bool same = true;
-        for (size_t k = 0; k < runs[0].size() && same; k++)
+        size_t firstK = opt.SnapshotAt && r > 0 ? static_cast<size_t>(opt.SnapshotAt) * opt.Consoles : 0;
+        for (size_t k = firstK; k < runs[0].size() && same; k++)
         {
             if (runs[0][k] != runs[r][k])
             {
@@ -423,6 +482,7 @@ static void Usage()
 {
     std::fprintf(stderr,
         "usage: melonDS-netprobe --rom FILE [--consoles N] [--frames N] [--runs N] [--from F]\n"
+        "       [--snapshot F]  (run 0 saves every console at F, later runs load it there)\n"
         "       [--script FILE] [--save I=FILE]... [--hashes OUT] [--nojit]\n"
         "       [--shot PREFIX --shot-frame F]...\n"
         "   net: --host [--port P] --consoles N | --join ADDR [--port P]\n"
@@ -445,6 +505,7 @@ int main(int argc, char** argv)
         else if (a == "--frames") opt.Frames = static_cast<u32>(std::atol(next().c_str()));
         else if (a == "--runs") opt.Runs = std::atoi(next().c_str());
         else if (a == "--from") opt.From = static_cast<u32>(std::atol(next().c_str()));
+        else if (a == "--snapshot") opt.SnapshotAt = static_cast<u32>(std::atol(next().c_str()));
         else if (a == "--script") opt.Script = next();
         else if (a == "--hashes") opt.HashOut = next();
         else if (a == "--nojit") opt.Jit = false;
